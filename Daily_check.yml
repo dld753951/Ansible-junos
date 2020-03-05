@@ -1,0 +1,98 @@
+---
+- name: Juniper switch check
+  hosts: Juniper
+  roles:
+    - Juniper.junos
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Make Config Backup Directory
+      local_action:
+        module: file
+        path: "Backup/{{ lookup('pipe', 'date +%Y%m%d') }}"
+        state: directory
+        mode: u=rwX,g=rX,o=rX
+
+    - name: Input Check CLI
+      juniper_junos_command:
+        commands:
+          - "show chassis routing-engine"
+          - "show chassis environment"
+          - "show chassis alarm"
+          - "show system alarm"
+          - "show system uptime"
+          - "show ntp status"
+        dest: "Backup/{{ lookup('pipe', 'date +%Y%m%d') }}/{{ inventory_hostname}}.txt"
+
+    - name: read file0
+      register: HOST_MGMT0
+      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep "Current time"'
+
+    - name: uptime print
+      debug: msg="{{ inventory_hostname }}:{{ HOST_MGMT0.stdout }}"
+      register: result_uptime
+
+    - name: Read file1
+      register: HOST_MGMT1
+      shell: "cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt"
+
+    - name: Alarm check
+      when: '"No alarms currently active" in HOST_MGMT1.stdout'
+      debug: msg="No Alarms OK"
+      register: result_alarm
+
+    - name: NTP check
+      when: '"sync_ntp" in HOST_MGMT1.stdout'
+      debug: msg="NTP state OK"
+      register: result_ntp
+
+    - name: read file2
+      register: HOST_MGMT3
+      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep "FPC *"'
+      ignore_errors: True
+
+    - name: ENV check
+      when: '"OK" in HOST_MGMT3.stdout'
+      debug: msg="ENV state OK"
+      register: result_env
+
+    - name: read file3
+      register: HOST_MGMT4
+      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep -E "Memory|Idle"'
+      ignore_errors: True
+
+    - name: Memory and CPU check
+      debug: msg="{{ HOST_MGMT4.stdout }}"
+      register: result_cpu
+
+    - name: Make Result Directory
+      local_action:
+        module: file
+        path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}"
+        state: directory
+        mode: u=rwX,g=rX,o=rX
+
+    - name: Result summary
+      local_action:
+        copy content={{ result_uptime }}\n{{ result_alarm }}\n{{ result_ntp }}\n{{ result_env }}\n{{ result_cpu }}
+        dest="Result/{{ lookup('pipe', 'date +%Y%m%d') }}/{{ inventory_hostname }}.txt"
+
+    - name: Result modify1
+      replace:
+        path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}/{{ inventory_hostname }}.txt"
+        regexp: "'skip_reason'"
+        replace: "{{ inventory_hostname }}"
+
+    - name: Assemble from fragments from a directory
+      assemble:
+        delimiter: \n"#####{{ inventory_hostname}}#####"
+        src: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}"
+        dest: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}_Result_summary.txt"
+      ignore_errors: True
+
+    - name: Result modify2
+      replace:
+        path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}_Result_summary.txt"
+        regexp: "'failed': False, 'changed': False"
+        replace: "Complite"
