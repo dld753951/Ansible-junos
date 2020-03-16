@@ -6,6 +6,9 @@
   connection: local
   gather_facts: no
 
+  vars:
+    val : int()
+
   tasks:
     - name: Make Config Backup Directory
       local_action:
@@ -19,52 +22,63 @@
         commands:
           - "show chassis routing-engine"
           - "show chassis environment"
-          - "show chassis alarm"
           - "show system alarm"
           - "show system uptime"
           - "show ntp status"
         dest: "Backup/{{ lookup('pipe', 'date +%Y%m%d') }}/{{ inventory_hostname}}.txt"
 
     - name: read file0
-      register: HOST_MGMT0
       shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep "Current time"'
-
-    - name: uptime print
-      debug: msg="{{ inventory_hostname }}:{{ HOST_MGMT0.stdout }}"
-      register: result_uptime
+      register: HOST_MGMT0
 
     - name: Read file1
-      register: HOST_MGMT1
       shell: "cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt"
+      register: HOST_MGMT1
 
     - name: Alarm check
-      when: '"No alarms currently active" in HOST_MGMT1.stdout'
-      debug: msg="No Alarms OK"
+      debug: msg="{% if 'No alarms currently active' in HOST_MGMT1.stdout %}  ALM state OK {% else %}  ALM state check {% endif %}"
       register: result_alarm
+      ignore_errors: True
 
     - name: NTP check
-      when: '"sync_ntp" in HOST_MGMT1.stdout'
-      debug: msg="NTP state OK"
+      debug: msg="{% if 'sync_ntp' in HOST_MGMT1.stdout %}  NTP state OK {% else %}  NTP state check {% endif %}"
       register: result_ntp
 
     - name: read file2
-      register: HOST_MGMT3
-      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep "FPC *"'
+      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep FPC'
       ignore_errors: True
+      register: HOST_MGMT3
 
     - name: ENV check
-      when: '"OK" in HOST_MGMT3.stdout'
-      debug: msg="ENV state OK"
+      debug: msg="{% if '("Absent" or "Present" or "Failed" or "Check")' in HOST_MGMT3.stdout %}  ENV state check {% else %}  ENV state OK {% endif %}"
+      ignore_errors: True
       register: result_env
 
-    - name: read file3
-      register: HOST_MGMT4
-      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep -E "Memory|Idle"'
+    - name: read file2-2
+      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep Fan'
       ignore_errors: True
+      register: HOST_MGMT5
 
-    - name: Memory and CPU check
-      debug: msg="{{ HOST_MGMT4.stdout }}"
-      register: result_cpu
+    - name: FAN check
+      debug: msg="{% if 'Spinning at normal speed' in HOST_MGMT5.stdout %}  FAN state OK {% else %}  FAN state check {% endif %}"
+      ignore_errors: True
+      register: result_fan
+
+    - name: read file3
+      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep "Memory"'
+      ignore_errors: True
+      register: HOST_MGMT4
+
+    - name: Memory check
+      debug: msg="{% if '{{ val }} percent' in HOST_MGMT4.stdout %}  MEM state OK {% else %}  MEM state check {% endif %}"
+      when: 'val |int() < 60'
+      ignore_errors: True
+      register: result_memory
+
+    - name: read file4
+      shell: 'cat Backup/$(date +%Y%m%d)/{{ inventory_hostname }}.txt | grep "Idle"'
+      ignore_errors: True
+      register: HOST_MGMT5
 
     - name: Make Result Directory
       local_action:
@@ -75,24 +89,35 @@
 
     - name: Result summary
       local_action:
-        copy content={{ result_uptime }}\n{{ result_alarm }}\n{{ result_ntp }}\n{{ result_env }}\n{{ result_cpu }}
+        copy content="##########_{{ inventory_hostname }}_##########\n{{ HOST_MGMT0.stdout }}\n{{result_alarm}}\n{{ result_ntp }}\n{{ result_env }}\n{{ result_fan }}\n{{ result_memory }}\n\n"
         dest="Result/{{ lookup('pipe', 'date +%Y%m%d') }}/{{ inventory_hostname }}.txt"
-
-    - name: Result modify1
-      replace:
-        path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}/{{ inventory_hostname }}.txt"
-        regexp: "'skip_reason'"
-        replace: "{{ inventory_hostname }}"
 
     - name: Assemble from fragments from a directory
       assemble:
-        delimiter: \n"#####{{ inventory_hostname}}#####"
         src: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}"
         dest: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}_Result_summary.txt"
       ignore_errors: True
 
+    - name: Result modify1
+      replace:
+        path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}_Result_summary.txt"
+        regexp: "'msg': u'"
+        replace: ""
+
     - name: Result modify2
       replace:
         path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}_Result_summary.txt"
+        regexp: "'skip_reason': u'Conditional result was False', 'skipped': True, 'changed': False"
+        replace: "skip"
+
+    - name: Result modify3
+      replace:
+        path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}_Result_summary.txt"
         regexp: "'failed': False, 'changed': False"
-        replace: "Complite"
+        replace: ""
+
+    - name: Result modify4
+      replace:
+        path: "Result/{{ lookup('pipe', 'date +%Y%m%d') }}_Result_summary.txt"
+        regexp: "',"
+        replace: ""
