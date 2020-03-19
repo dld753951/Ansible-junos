@@ -1,6 +1,6 @@
 ---
 - name: Juniper switch check
-  hosts: Juniper
+  hosts: juniper
   roles:
     - Juniper.junos
   connection: local
